@@ -1,0 +1,196 @@
+---
+title: "DSHB Project"
+author: "Jessica Samir"
+format: html
+editor: visual
+---
+
+```{r}
+library(dplyr)
+library(MASS)
+library(ggplot2)
+library(readr)
+
+df <- read_csv("sub_data.csv")
+
+head(df)
+nrow(df)
+summary(df)
+```
+
+# Binary Logistic Regression
+
+```{r}
+# Check levels of categorical variables to ensure there are at least two levels
+table(df$k2q31a)  # Should have both "Yes" and "No"
+table(df$screentime)  # Should have all 5 categories of screentime
+table(df$physactiv) 
+table(df$k7q04r_r)
+
+```
+
+```{r}
+df <- df %>%
+  mutate(
+    
+    adhd_diag = factor(k2q31a, levels = c(1, 2), labels = c("Yes", "No")),
+    
+    adhd_severity = factor(k2q31c, ordered = TRUE),
+    
+    sc_sex = factor(sc_sex, levels = c(1, 2), labels = c("Male", "Female"))
+  )
+
+df_model <- df %>%
+  filter(!is.na(adhd_diag) & !is.na(screentime) & !is.na(sc_age_years) & 
+           !is.na(sc_sex) & !is.na(grades) & !is.na(k7q04r_r) & !is.na(physactiv))
+
+df_model <- df_model %>%
+  mutate(
+    grades = factor(grades, levels = c(1, 2, 3, 4, 5, 6), 
+                    labels = c("Mostly A's", "Mostly A's and B's", "Mostly B's and C's", 
+                               "Mostly C's and D's", "Mostly D's or lower", "No grades provided")),
+    
+    k7q04r_r = factor(k7q04r_r, levels = c(1, 2, 3), 
+                      labels = c("None", "1 time", "2 or more times")),
+    
+    physactiv = factor(physactiv, levels = c(1, 2, 3, 4), 
+                       labels = c("0 days", "1-3 days", "4-6 days", "Every day"))
+  )
+
+df_model$screentime <- factor(df_model$screentime, 
+                               levels = c(1, 2, 3, 4, 5), 
+                               labels = c("Less than 1 hour", "1 hour", "2 hours", "3 hours", "4 or more hours"), 
+                               ordered = TRUE)
+str(df_model)
+summary(df_model)
+
+#model
+binary_logit <- glm(adhd_diag ~ screentime + k7q04r_r + grades + sc_age_years + sc_sex + physactiv,
+                    data = df_model, family = binomial)
+summary(binary_logit)
+
+
+
+```
+
+```{r}
+# First, ensure you have the necessary packages
+if (!requireNamespace("pROC", quietly = TRUE)) {
+  install.packages("pROC")
+}
+library(pROC)
+library(ggplot2)
+
+# Fit the model and compute predicted probabilities
+probabilities <- predict(binary_logit, newdata=df_model, type = "response")
+observed_outcomes <- df_model$adhd_diag
+
+# Construct the ROC object
+roc_obj <- roc(response = observed_outcomes, predictor = probabilities)
+
+# Generate the plot data for ggplot2
+roc_data <- data.frame(
+  False_Positive_Rate = 1 - roc_obj$specificities,
+  True_Positive_Rate = roc_obj$sensitivities
+)
+
+# Plot the ROC curve with ggplot2
+ggplot(roc_data, aes(x = False_Positive_Rate, y = True_Positive_Rate)) +
+  geom_line(color = "green") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") + # Random classifier line
+  geom_segment(x = 0, xend = 1, y = 0, yend = 1, color = "grey", linetype = "dotted") +
+  labs(
+    x = "False Positive Rate (1 - Specificity)",
+    y = "True Positive Rate (Sensitivity)",
+    title = "ROC Curve",
+    subtitle = paste("AUC =", round(auc(roc_obj), 2))
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size=14, face="bold"),
+    plot.subtitle = element_text(size=12)
+  )
+
+# Print the ROC plot
+roc_plot
+```
+
+```{r}
+predicted_probs <- predict(binary_logit, type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, "Yes", "No") #0.5 b/c it is binary
+
+conf_matrix <- table(Predicted = predicted_class, Actual = df_model$adhd_diag)
+print(conf_matrix)
+
+#calculating accuracy, sensitivity, specificity based on confusion matrix
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+sensitivity <- conf_matrix["Yes", "Yes"] / sum(conf_matrix[ , "Yes"])
+specificity <- conf_matrix["No", "No"] / sum(conf_matrix[ , "No"])
+
+conf_matrix_df <- as.data.frame.matrix(conf_matrix)
+
+conf_matrix_df$Actual <- rownames(conf_matrix_df)
+
+
+conf_matrix_long <- tidyr::pivot_longer(conf_matrix_df, cols = -Actual, names_to = "Predicted", values_to = "Count")
+
+###########
+ggplot(conf_matrix_long, aes(x = Actual, y = Predicted, fill = Count)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Count), vjust = 1) +
+  scale_fill_gradient(low = "white", high = "purple") +
+  labs(x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Ordinal Logistic Regression
+
+```{r}
+df <- read_csv("ADHD_data.csv")
+
+df <- df %>%
+  mutate(
+    adhd_severity = factor(k2q31c, levels = c(1, 2, 3),
+                           labels = c("Mild", "Moderate", "Severe"),
+                           ordered = TRUE)
+  )
+
+df_ord <- df %>%
+  dplyr::select(adhd_severity, screentime) %>%
+  filter(!is.na(adhd_severity) & !is.na(screentime))
+
+## model
+ord_model <- polr(adhd_severity ~ screentime, data = df_ord, Hess = TRUE)
+summary(ord_model)
+
+coefs <- coef(summary(ord_model))
+p_values <- pnorm(abs(coefs[, "t value"]), lower.tail = FALSE) * 2
+coefs <- cbind(coefs, "p value" = p_values)
+
+#printing full results
+print(coefs, digits = 4)
+
+
+
+
+```
+
+```{r}
+newdata_screentime <- with(df_ord, data.frame(screentime = seq(min(screentime), max(screentime), length.out = 100)))
+
+predicted_probs <- predict(ord_model, newdata = newdata_screentime, type = "probs")
+
+pred_df <- as.data.frame(predicted_probs)
+pred_df$screentime <- newdata_screentime$screentime
+
+long_pred_df <- pivot_longer(pred_df, cols = c("Mild", "Moderate", "Severe"), names_to = "Severity", values_to = "Probability")
+
+ggplot(long_pred_df, aes(x = screentime, y = Probability, color = Severity)) +
+  geom_line(linewidth = 4) +
+  labs(x = "Screen Time", y = "Probability", color = "ADHD Severity") +
+  theme_minimal() +
+  labs(title = "Predicted Probabilities Across Screen Time") +
+  theme(title = element_text(face = "bold", size = 16)) 
+```
