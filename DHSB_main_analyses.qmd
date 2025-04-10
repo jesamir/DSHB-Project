@@ -87,7 +87,7 @@ binary_logit <- glm(adhd_diag ~ screentime + k7q04r_r + grades + sc_age_years +
 
 test_data$predicted_prob <- predict(binary_logit, newdata = test_data, type = "response")
 
-test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, "Yes", "No")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.164, "Yes", "No")
 
 conf_matrix <- table(Predicted = test_data$predicted_class, Actual = test_data$adhd_diag)
 print(conf_matrix)
@@ -107,7 +107,7 @@ summary(binary_logit)
 ```{r}
 # Generate predictions on the test data
 predicted_probs <- predict(binary_logit, newdata = test_data, type = "response")
-predicted_class <- ifelse(predicted_probs > 0.5, "Yes", "No")
+predicted_class <- ifelse(predicted_probs > 0.164, "Yes", "No")
 
 # Create confusion matrix
 conf_matrix <- table(Predicted = predicted_class, Actual = test_data$adhd_diag)
@@ -159,6 +159,25 @@ print(roc_curve)
 # Get the AUC (Area Under the Curve) value
 auc_value <- auc(roc_obj)
 print(auc_value)
+
+```
+
+```{r}
+# Find the optimal threshold based on Youden's J statistic
+opt_index <- which.max(roc_obj$sensitivities + roc_obj$specificities - 1)
+optimal_threshold <- roc_obj$thresholds[opt_index]
+print(paste("Optimal threshold:", round(optimal_threshold, 3)))
+
+# Update predicted class using the optimized threshold
+test_data$predicted_class_opt <- ifelse(test_data$predicted_prob > optimal_threshold, "Yes", "No")
+
+# Confusion matrix using optimal threshold
+conf_matrix_opt <- table(Predicted = test_data$predicted_class_opt, Actual = test_data$adhd_diag)
+print(conf_matrix_opt)
+
+# Accuracy with optimized threshold
+accuracy_opt <- sum(diag(conf_matrix_opt)) / sum(conf_matrix_opt)
+print(paste("Optimized accuracy:", round(accuracy_opt, 3)))
 
 ```
 
