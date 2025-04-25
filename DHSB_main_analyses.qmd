@@ -5,7 +5,14 @@ format: html
 editor: visual
 ---
 
+# DHSB Project
+
+For more of a look at our preprocessing of the NSCH data, check out our Github!
+
+<https://github.com/jesamir/DSHB-Project>
+
 ```{r}
+library(tidyverse)
 library(dplyr)
 library(MASS)
 library(ggplot2)
@@ -13,6 +20,7 @@ library(readr)
 library(caret)
 library(pROC)
 library(tidyr)
+library(gridExtra)
 
 df <- read_csv("sub_data.csv")
 
@@ -24,9 +32,8 @@ summary(df)
 # Binary Logistic Regression
 
 ```{r}
-# Check levels of categorical variables to ensure there are at least two levels
-table(df$k2q31a)  # Should have both "Yes" and "No"
-table(df$screentime)  # Should have all 5 categories of screentime
+table(df$k2q31a) 
+table(df$screentime)
 table(df$physactiv) 
 table(df$k7q04r_r)
 table(df$k2q31c)
@@ -105,15 +112,12 @@ summary(binary_logit)
 ```
 
 ```{r}
-# Generate predictions on the test data
 predicted_probs <- predict(binary_logit, newdata = test_data, type = "response")
 predicted_class <- ifelse(predicted_probs > 0.164, "Yes", "No")
 
-# Create confusion matrix
 conf_matrix <- table(Predicted = predicted_class, Actual = test_data$adhd_diag)
 print(conf_matrix)
 
-# Calculate accuracy, sensitivity, specificity
 accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
 sensitivity <- conf_matrix["Yes", "Yes"] / sum(conf_matrix[ , "Yes"])
 specificity <- conf_matrix["No", "No"] / sum(conf_matrix[ , "No"])
@@ -121,64 +125,69 @@ print(paste("Accuracy:", round(accuracy, 3)))
 print(paste("Sensitivity:", round(sensitivity, 3)))
 print(paste("Specificity:", round(specificity, 3)))
 
-# Prepare data for ggplot
 conf_matrix_df <- as.data.frame.matrix(conf_matrix)
 conf_matrix_df$Actual <- rownames(conf_matrix_df)
 conf_matrix_long <- tidyr::pivot_longer(conf_matrix_df, cols = -Actual, names_to = "Predicted", values_to = "Count")
 
-# Create heatmap
 ggplot(conf_matrix_long, aes(x = Actual, y = Predicted, fill = Count)) +
   geom_tile(color = "white") +
   geom_text(aes(label = Count), vjust = 1) +
-  scale_fill_gradient(low = "white", high = "purple") +
+  scale_fill_gradient(low = "#13EFFF", high = "#1E4EB3") +
   labs(x = "Actual", y = "Predicted", title = "Confusion Matrix") +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    theme(
+    plot.title = element_text(face = "bold.italic", size = 14),         
+    axis.title.x = element_text(face = "bold.italic", size = 10),            
+    axis.title.y = element_text(face = "bold.italic", size = 10),             
+    axis.text = element_text(size = 12))                                
 ```
 
 ```{r}
-# Calculate the ROC curve
 roc_obj <- roc(test_data$adhd_diag, test_data$predicted_prob, levels=c("No", "Yes"))
 
-# Create a data frame from the ROC object
 roc_data <- data.frame(
   specificity = roc_obj$specificities,
   sensitivity = roc_obj$sensitivities
 )
 
-# Plot the ROC curve using ggplot2
+opt_index <- which.max(roc_obj$sensitivities + roc_obj$specificities - 1)
+
 roc_curve <- ggplot(data = roc_data, aes(x = 1 - specificity, y = sensitivity)) +
-  geom_line(colour = "blue") +
-  geom_abline(linetype = "dashed") +
+  geom_line(colour = "#13EFFF", linewidth = 1.5) +
+  geom_abline(linetype = "dashed", color = "#FF8C69", linewidth = 1) +
   labs(title = "ROC Curve for ADHD Diagnosis Model", x = "1 - Specificity (False Positive Rate)", 
        y = "Sensitivity (True Positive Rate)") +
-  theme_minimal()
-
+  theme_minimal() +
+   geom_point(aes(x = 1 - roc_obj$specificities[opt_index],
+                 y = roc_obj$sensitivities[opt_index]),
+             color = "black", size = 3) +
+  theme(
+    plot.title = element_text(face = "bold.italic", size = 14),     
+    axis.title.x = element_text(face = "bold.italic", size = 10),            
+    axis.title.y = element_text(face = "bold.italic", size = 10),             
+    axis.text = element_text(size = 12)                                 
+  )
 print(roc_curve)
 
-# Get the AUC (Area Under the Curve) value
 auc_value <- auc(roc_obj)
 print(auc_value)
 
 ```
 
 ```{r}
-# Find the optimal threshold based on Youden's J statistic
 opt_index <- which.max(roc_obj$sensitivities + roc_obj$specificities - 1)
 optimal_threshold <- roc_obj$thresholds[opt_index]
 print(paste("Optimal threshold:", round(optimal_threshold, 3)))
 
-# Update predicted class using the optimized threshold
 test_data$predicted_class_opt <- ifelse(test_data$predicted_prob > optimal_threshold, "Yes", "No")
 
-# Confusion matrix using optimal threshold
 conf_matrix_opt <- table(Predicted = test_data$predicted_class_opt, Actual = test_data$adhd_diag)
 print(conf_matrix_opt)
 
-# Accuracy with optimized threshold
 accuracy_opt <- sum(diag(conf_matrix_opt)) / sum(conf_matrix_opt)
 print(paste("Optimized accuracy:", round(accuracy_opt, 3)))
-
+#0.164 is the optimal threshold, not 0.5
 ```
 
 # Ordinal Logistic Regression
@@ -203,18 +212,14 @@ print(nrow(df_ord))
 
 ord_model <- polr(adhd_severity ~ screentime, data = df_ord, Hess = TRUE)
 
-# Summary of model
 summary_ord_model <- summary(ord_model)
 
-# Extract coefficients and compute p-values
+#p values
 coefs <- coef(summary_ord_model)
 p_values <- pnorm(abs(coefs[, "t value"]), lower.tail = FALSE) * 2
 coefs <- cbind(coefs, "p value" = p_values)
 
-# Printing full results with specified digits
 print(coefs, digits = 4)
-
-
 
 ```
 
@@ -228,27 +233,155 @@ pred_df$screentime <- newdata_screentime$screentime
 
 long_pred_df <- pivot_longer(pred_df, cols = c("Mild", "Moderate", "Severe"), names_to = "Severity", values_to = "Probability")
 
-# Create separate plots for each severity level
 plot_mild <- ggplot(long_pred_df[long_pred_df$Severity == "Mild", ], aes(x = screentime, y = Probability)) +
-  geom_line(color = "blue", linewidth = 2) +
+  geom_line(color = "#7D82B9", linewidth = 2) +
   labs(x = "Screen Time", y = "Probability", title = "Mild Severity") +
   theme_minimal() +
-  theme(plot.title = element_text(face = "bold", size = 12))
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    axis.title.x = element_text(size = 10, margin = margin(t = 10)), 
+    axis.title.y = element_text(size = 10, margin = margin(r = 10)),  
+    axis.text = element_text(size = 9))
 
 plot_moderate <- ggplot(long_pred_df[long_pred_df$Severity == "Moderate", ], aes(x = screentime, y = Probability)) +
-  geom_line(color = "green", linewidth = 2) +
+  geom_line(color = "#C2C6A7", linewidth = 2) +
   labs(x = "Screen Time", y = "Probability", title = "Moderate Severity") +
   theme_minimal() +
-  theme(plot.title = element_text(face = "bold", size = 12))
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    axis.title.x = element_text(size = 10, margin = margin(t = 10)), 
+    axis.title.y = element_text(size = 10, margin = margin(r = 10)),  
+    axis.text = element_text(size = 9))
 
 plot_severe <- ggplot(long_pred_df[long_pred_df$Severity == "Severe", ], aes(x = screentime, y = Probability)) +
-  geom_line(color = "red", linewidth = 2) +
+  geom_line(color = "#CB1550", linewidth = 2) +
   labs(x = "Screen Time", y = "Probability", title = "Severe Severity") +
   theme_minimal() +
-  theme(plot.title = element_text(face = "bold", size = 12))
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    axis.title.x = element_text(size = 10, margin = margin(t = 10)), 
+    axis.title.y = element_text(size = 10, margin = margin(r = 10)),  
+    axis.text = element_text(size = 9))
 
-# Arrange the plots in a grid
-grid_plot <- grid.arrange(plot_mild, plot_moderate, plot_severe, nrow = 3, ncol = 1, heights = c(1, 1, 1))
+grid_plot <- grid.arrange(plot_mild, plot_moderate, plot_severe, nrow = 3, ncol = 1, heights = c(5, 5, 5))
 
 ggsave("combined_plot.png", grid_plot, width = 16, height = 12, dpi = 300)
+```
+
+# Exploratory Analyses
+
+```{r}
+df <- df %>%
+  mutate(
+    sc_sex = factor(sc_sex, levels = c(1, 2), labels = c("Male", "Female")),
+    adhd_diag = factor(k2q31a, levels = c(1, 2), labels = c("Yes", "No"))
+  )
+
+# Create a contingency table
+sex_table <- table(df$sc_sex, df$adhd_diag)
+
+# Run Chi-square test
+chisq_test_sex <- chisq.test(sex_table)
+
+# View results
+chisq_test_sex
+```
+
+```{r}
+df %>%
+  filter(sc_sex %in% c("Male", "Female")) %>%
+  mutate(
+    adhd_diag = factor(k2q31a, levels = c(1, 2), labels = c("Yes", "No"))
+  ) %>%
+  ggplot(aes(x = sc_sex, fill = fct_rev(adhd_diag))) +  # Reverse fill order
+  geom_bar(position = "fill") +
+  scale_fill_manual(
+    values = c("No" = "#1e4eb3", "Yes" = "#13EFFF"),  # Teal + soft coral
+    name = "ADHD Diagnosis"
+  ) +
+  labs(
+    title = "Proportion of ADHD Diagnoses by Sex",
+    x = "Sex",
+    y = "Proportion"
+  ) +
+  theme_classic() +
+  theme(
+   axis.text.x = element_text(face = "bold.italic", size = 9, vjust = ),
+    plot.title = element_text(face = "bold.italic", size = 16),
+    
+    axis.title.x = element_text(face = "bold.italic", size = 14, margin = margin(t = 10)), 
+    
+    axis.title.y = element_text(face = "bold.italic", size = 14, margin = margin(r = 10)),  
+    
+    axis.text = element_text(size = 12))
+
+```
+
+```{r}
+prop.test(
+  x = sex_table[, "Yes"],         # Number of ADHD cases
+  n = rowSums(sex_table),         # Total per sex
+  correct = TRUE                  # Yates continuity correction
+)
+```
+
+```{r}
+df %>%
+  mutate(
+    sc_race_r = factor(sc_race_r)  # Add labels if available
+  )
+
+# Filter out missing data
+race_df <- df %>%
+  filter(!is.na(sc_race_r), !is.na(adhd_diag))
+
+# Contingency table
+race_table <- table(race_df$sc_race_r, race_df$adhd_diag)
+
+# Run Chi-square test
+chisq_test_race <- chisq.test(race_table)
+
+# View results
+chisq_test_race
+```
+
+```{r}
+library(dplyr)
+library(forcats)
+library(ggplot2)
+
+df <- df %>%
+  mutate(
+    race_label = factor(sc_race_r, levels = c(1, 2, 3, 4, 5, 7),
+                        labels = c("White", "Black", "American Indian\nor Alaska Native", 
+                                   "Asian", "Native Hawaiian\nor Pacific Islander", "Multiracial")),
+    adhd = factor(k2q31a, levels = c(1, 2), labels = c("Yes", "No"))
+  ) %>%
+  filter(!is.na(sc_race_r), !is.na(k2q31a))
+
+plot <- ggplot(df, aes(x = race_label, fill = fct_rev(adhd))) +
+  geom_bar(position = "fill", width = 0.7) +
+  labs(y = "Proportion", x = "Race/Ethnicity", fill = "ADHD Diagnosis") +
+  scale_fill_manual(values = c("#1e4eb3", "#13EFFF")) +
+  scale_y_continuous(expand = c(0, 0)) +
+  ggtitle("ADHD by Race") +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(face = "bold.italic", size = 9),
+    plot.title = element_text(face = "bold.italic", size = 16),
+    axis.title.x = element_text(face = "bold.italic", size = 14, margin = margin(t = 10)), 
+    axis.title.y = element_text(face = "bold.italic", size = 14, margin = margin(r = 10)),  
+    axis.text = element_text(size = 12)
+  )
+print(plot)
+ggsave("race_plot.png", plot, width = 10, height = 5, dpi = 300)
+
+```
+
+```{r}
+pairwise.prop.test(
+  x = race_table[, "Yes"],          
+  n = rowSums(race_table),         
+  p.adjust.method = "holm"    
+)
 ```
